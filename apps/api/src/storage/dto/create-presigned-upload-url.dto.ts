@@ -8,7 +8,7 @@ export class CreatePresignedUploadUrlDto {
     fileName: string;
 
     @Matches(/^[a-zA-Z0-9-]+\/[a-zA-Z0-9-+.]+$/, {
-        message: 'contentType debe tener un formato MIME válido (ej: image/png, application/pdf)',
+        message: 'contentType must be a valid MIME format (e.g. image/png, application/pdf)',
     })
     contentType: string;
 }
