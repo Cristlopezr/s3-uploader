@@ -1,12 +1,14 @@
-import { Inject, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Inject, Injectable, InternalServerErrorException, NotFoundException } from '@nestjs/common';
 import { CreatePresignedUploadUrlDto } from './dto/create-presigned-upload-url.dto';
 import { GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { ConfigService } from '@nestjs/config';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { InjectModel } from '@nestjs/mongoose';
-import { File } from './schemas/file-schema.schema';
+import { File, FileStatus } from './schemas/file-schema.schema';
 import { Model } from 'mongoose';
 import { v4 as uuid } from 'uuid';
+import { FileResponseDto } from './dto/file-response.dto';
+import { instanceToPlain } from 'class-transformer';
 
 @Injectable()
 export class StorageService {
@@ -16,39 +18,67 @@ export class StorageService {
     private readonly configService: ConfigService,
     @InjectModel(File.name) private readonly fileModel: Model<File>) { }
 
-  async createPresignedUploadUrl({ contentType, fileName }: CreatePresignedUploadUrlDto) {
+  async createPresignedUploadUrl({ contentType, fileName, size }: CreatePresignedUploadUrlDto) {
 
-    const s3FileName = uuid()
+    const s3Name = uuid()
 
     const command = new PutObjectCommand({
       Bucket: this.configService.get<string>('bucket_name'),
-      Key: `${this.configService.get('file_key_base')}/${s3FileName}`,
+      Key: `${this.configService.get('file_key_base')}/${s3Name}`,
       ContentType: contentType
     })
 
     try {
-      await this.fileModel.create({ originalName: fileName, s3Name: s3FileName });
-      return await getSignedUrl(this.s3Client, command, { expiresIn: this.configService.get<number>('presigned_url_expires_in') })
+      const createdFile = await this.fileModel.create({ originalName: fileName, s3Name, contentType, size, status: FileStatus.PENDING });
+      const file = instanceToPlain(new FileResponseDto(createdFile.toObject()), { strategy: 'excludeAll' });
+      const presignedUrl = await getSignedUrl(this.s3Client, command, { expiresIn: this.configService.get<number>('presigned_url_expires_in') })
+      return {
+        presignedUrl,
+        file,
+      }
     } catch (error) {
       console.log('Error generating presigned Url ' + error)
       throw new InternalServerErrorException('Error generating presigned Url')
     }
   }
 
-  async createPresignedGetUrl(id: string) {
+  async createPresignedDownloadUrl(id: string) {
 
-    const file = await this.fileModel.findById(id);
-    if (!file) throw new NotFoundException('File not found')
+    const file = await this.findOneFileById(id);
+
+    if (file.status !== FileStatus.ACTIVE) throw new BadRequestException('File is not active')
 
     const command = new GetObjectCommand({
       Bucket: this.configService.get<string>('bucket_name'),
       Key: `${this.configService.get('file_key_base')}/${file.s3Name}`,
+      ResponseContentDisposition: `inline; filename="${file.originalName}"`,
+      /* ResponseContentDisposition: `attachment; filename="${file.originalName}"` */
+      ResponseContentType: file.contentType
     })
     try {
-      return await getSignedUrl(this.s3Client, command, { expiresIn: this.configService.get<number>('presigned_url_expires_in') })
+      const presignedUrl = await getSignedUrl(this.s3Client, command, { expiresIn: this.configService.get<number>('presigned_url_expires_in') })
+      return {
+        presignedUrl
+      }
     } catch (error) {
       console.log('Error generating presigned Url ' + error)
       throw new InternalServerErrorException('Error generating presigned Url')
     }
+  }
+
+  async getFileById(id: string) {
+    const file = await this.findOneFileById(id);
+    return instanceToPlain(new FileResponseDto(file.toObject()), { strategy: 'excludeAll' })
+  }
+
+  async getAllFiles() {
+    const files = await this.fileModel.find();
+    return files.map((file) => instanceToPlain(new FileResponseDto(file.toObject()), { strategy: 'excludeAll' }))
+  }
+
+  private async findOneFileById(id: string) {
+    const file = await this.fileModel.findById(id);
+    if (!file) throw new NotFoundException('File not found')
+    return file;
   }
 }

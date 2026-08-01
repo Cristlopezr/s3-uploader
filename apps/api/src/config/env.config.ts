@@ -6,7 +6,8 @@ export const EnvConfiguration = () => ({
     bucket_name: process.env.BUCKET_NAME,
     file_key_base: process.env.FILE_KEY_BASE,
     presigned_url_expires_in: process.env.PRESIGNED_URL_EXPIRES_IN,
-    mongo_uri: process.env.MONGO_URI
+    mongo_uri: process.env.MONGO_URI,
+    allowed_origins: process.env.ALLOWED_ORIGINS?.split(',')
 })
 
 export const JoiValidationSchema = Joi.object({
@@ -15,5 +16,6 @@ export const JoiValidationSchema = Joi.object({
     BUCKET_NAME: Joi.string().required(),
     FILE_KEY_BASE: Joi.string().required(),
     PRESIGNED_URL_EXPIRES_IN: Joi.number().default(300),
-    MONGO_URI: Joi.string().required()
+    MONGO_URI: Joi.string().required(),
+    ALLOWED_ORIGINS: Joi.string().required()
 })
