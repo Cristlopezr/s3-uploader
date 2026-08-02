@@ -4,6 +4,7 @@ export interface StorageFile {
   size: number;
   contentType: string;
   createdAt: string;
+  status: string;
 }
 
 export type UploadStateStatus = 
@@ -11,7 +12,9 @@ export type UploadStateStatus =
   | 'selected'
   | 'requesting-url'
   | 'uploading'
+  | 'polling'
   | 'success'
+  | 'validation-failed'
   | 'error';
 
 export interface UploadProgress {

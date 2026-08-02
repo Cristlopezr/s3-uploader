@@ -18,6 +18,9 @@ export class FileResponseDto {
     @Expose()
     createdAt: Date;
 
+    @Expose()
+    status: string;
+
     constructor(partial: Partial<FileResponseDto>) {
         Object.assign(this, partial);
     }

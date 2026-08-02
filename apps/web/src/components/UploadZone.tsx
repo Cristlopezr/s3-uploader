@@ -1,12 +1,15 @@
-import React, { useState, useRef } from 'react';
-import { UploadCloud, File, X, CheckCircle2, AlertCircle } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { UploadCloud, File, X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import type { StorageFile, UploadProgress } from '../types';
 
+const POLLING_INTERVAL_MS = 3000;
+const MAX_POLLING_ATTEMPTS = 30; // ~1.5 minutes max
+
 interface UploadZoneProps {
-  onFileUploadSuccess: (newFile: StorageFile) => void;
+  onFileActivated: (newFile: StorageFile) => void;
 }
 
-export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) => {
+export const UploadZone: React.FC<UploadZoneProps> = ({ onFileActivated }) => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -15,6 +18,69 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
   });
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const pollingAttemptsRef = useRef(0);
+
+  // Cleanup polling on unmount
+  useEffect(() => {
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, []);
+
+  const stopPolling = () => {
+    if (pollingIntervalRef.current) {
+      clearInterval(pollingIntervalRef.current);
+      pollingIntervalRef.current = null;
+    }
+    pollingAttemptsRef.current = 0;
+  };
+
+  const startPolling = (fileId: string) => {
+    stopPolling();
+    setUploadState({ status: 'polling' });
+
+    pollingIntervalRef.current = setInterval(async () => {
+      pollingAttemptsRef.current += 1;
+
+      if (pollingAttemptsRef.current >= MAX_POLLING_ATTEMPTS) {
+        stopPolling();
+        setUploadState({
+          status: 'error',
+          errorMessage: 'File verification timed out. Please try again.',
+        });
+        return;
+      }
+
+      try {
+        const response = await fetch(
+          `${import.meta.env.VITE_BACKEND_URL}/api/storage/files/${fileId}`
+        );
+
+        if (!response.ok) throw new Error('Failed to check file status');
+
+        const file: StorageFile = await response.json();
+
+        if (file.status === 'ACTIVE') {
+          stopPolling();
+          onFileActivated(file);
+          setUploadState({ status: 'success' });
+        } else if (file.status === 'FAILED') {
+          stopPolling();
+          setUploadState({
+            status: 'validation-failed',
+            errorMessage: 'File validation failed',
+          });
+        }
+        // If still PENDING, continue polling
+      } catch (err) {
+        console.error('Polling error:', err);
+        // Don't stop polling on transient network errors, just log
+      }
+    }, POLLING_INTERVAL_MS);
+  };
 
   const handleFileChange = (file: File | null) => {
     if (!file) return;
@@ -46,6 +112,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
   };
 
   const handleClear = () => {
+    stopPolling();
     setSelectedFile(null);
     setPreviewUrl(null);
     setUploadState({ status: 'idle' });
@@ -84,8 +151,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
 
       if (!s3UploadResponse.ok) throw new Error('Failed to upload file to S3');
 
-      onFileUploadSuccess(file);
-      setUploadState({ status: 'success' });
+      startPolling(file.id);
 
     } catch (err: any) {
       console.error('Upload Error:', err);
@@ -97,6 +163,17 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
   };
 
   const isUploading = uploadState.status === 'uploading' || uploadState.status === 'requesting-url';
+  const isPolling = uploadState.status === 'polling';
+  const isBusy = isUploading || isPolling;
+
+  const getStatusLabel = (): string => {
+    switch (uploadState.status) {
+      case 'requesting-url': return 'Getting Presigned URL...';
+      case 'uploading': return 'Uploading to S3...';
+      case 'polling': return 'Verifying file...';
+      default: return 'Upload File';
+    }
+  };
 
   return (
     <div className="p-6 bg-slate-900/70 backdrop-blur-xl border border-white/10 rounded-2xl shadow-2xl flex flex-col gap-5">
@@ -106,7 +183,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
           <span>Upload File to S3</span>
         </h2>
 
-        {selectedFile && !isUploading && (
+        {selectedFile && !isBusy && (
           <button
             type="button"
             className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-semibold transition-all cursor-pointer shadow-md"
@@ -170,9 +247,20 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
                 {formatFileSize(selectedFile.size)} • {selectedFile.type || 'Unknown Type'}
               </span>
 
-              {isUploading && (
+              {(isUploading || isPolling) && (
                 <div className="w-full h-1.5 bg-white/10 rounded-full overflow-hidden mt-1.5">
-                  <div className="h-full bg-gradient-to-r from-indigo-500 to-cyan-500 rounded-full animate-pulse w-full" />
+                  <div className={`h-full rounded-full w-full ${
+                    isPolling 
+                      ? 'bg-gradient-to-r from-amber-500 to-yellow-500 animate-pulse' 
+                      : 'bg-gradient-to-r from-indigo-500 to-cyan-500 animate-pulse'
+                  }`} />
+                </div>
+              )}
+
+              {isPolling && (
+                <div className="flex items-center gap-1.5 mt-1">
+                  <Loader2 size={12} className="animate-spin text-amber-400" />
+                  <span className="text-xs text-amber-400">Verifying file with server...</span>
                 </div>
               )}
             </div>
@@ -182,7 +270,27 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
             {uploadState.status === 'success' ? (
               <div className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-500/15 text-emerald-400 border border-emerald-500/30">
                 <CheckCircle2 size={16} />
-                <span>Uploaded!</span>
+                <span>Verified & Active!</span>
+              </div>
+            ) : uploadState.status === 'validation-failed' ? (
+              <div className="flex items-center gap-2.5">
+                <div className="inline-flex flex-col items-start gap-1 px-3 py-1.5 rounded-lg text-xs font-semibold bg-rose-500/15 text-rose-400 border border-rose-500/30">
+                  <div className="flex items-center gap-1.5">
+                    <AlertCircle size={16} />
+                    <span>Validation Failed</span>
+                  </div>
+                  {uploadState.errorMessage && (
+                    <span className="text-[10px] font-normal text-rose-300/70">{uploadState.errorMessage}</span>
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-white/10 hover:bg-white/20 border border-white/10 text-slate-200 rounded-lg text-xs font-semibold transition-all cursor-pointer"
+                  onClick={handleClear}
+                >
+                  <X size={14} />
+                  <span>Try again</span>
+                </button>
               </div>
             ) : uploadState.status === 'error' ? (
               <div className="flex items-center gap-2.5">
@@ -204,7 +312,7 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
                 <button
                   className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg text-xs font-semibold text-slate-400 hover:text-white transition-all disabled:opacity-50 cursor-pointer"
                   onClick={handleClear}
-                  disabled={isUploading}
+                  disabled={isBusy}
                 >
                   <X size={16} />
                   <span>Clear</span>
@@ -212,13 +320,10 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
                 <button
                   className="inline-flex items-center gap-1.5 px-4 py-2 bg-gradient-to-r from-indigo-600 to-indigo-500 hover:from-indigo-500 hover:to-indigo-400 text-white rounded-lg text-xs font-semibold shadow-lg shadow-indigo-500/25 transition-all hover:-translate-y-0.5 disabled:opacity-50 disabled:translate-y-0 disabled:shadow-none cursor-pointer"
                   onClick={handleStartUpload}
-                  disabled={isUploading}
+                  disabled={isBusy}
                 >
-                  <UploadCloud size={16} />
-                  <span>
-                    {uploadState.status === 'requesting-url' ? 'Getting Presigned URL...' :
-                      uploadState.status === 'uploading' ? 'Uploading to S3...' : 'Upload File'}
-                  </span>
+                  {isBusy ? <Loader2 size={16} className="animate-spin" /> : <UploadCloud size={16} />}
+                  <span>{getStatusLabel()}</span>
                 </button>
               </>
             )}
@@ -228,3 +333,4 @@ export const UploadZone: React.FC<UploadZoneProps> = ({ onFileUploadSuccess }) =
     </div>
   );
 };
+

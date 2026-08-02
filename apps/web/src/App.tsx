@@ -28,8 +28,8 @@ export function App() {
     fetchFilesFromBackend();
   }, []);
 
-  const handleFileUploadSuccess = (newFile: StorageFile) => {
-    setFiles((prev) => [newFile, ...prev]);
+  const handleFileActivated = (activatedFile: StorageFile) => {
+    setFiles((prev) => [activatedFile, ...prev]);
   };
 
   return (
@@ -43,7 +43,7 @@ export function App() {
 
       {/* Drag & Drop File Upload Section */}
       <UploadZone
-        onFileUploadSuccess={handleFileUploadSuccess}
+        onFileActivated={handleFileActivated}
       />
 
       {/* S3 Files Browser & Direct Download/View */}
