@@ -15,7 +15,7 @@ export class File {
     originalName: string;
 
     @Prop({ required: true, unique: true })
-    s3Name: string
+    s3FileKey: string
 
     @Prop({ required: true })
     size: number
@@ -25,6 +25,9 @@ export class File {
 
     @Prop({ type: String, enum: FileStatus, default: FileStatus.PENDING })
     status: FileStatus;
+
+    @Prop()
+    failedReason: string;
 }
 
 export const FileSchema = SchemaFactory.createForClass(File);

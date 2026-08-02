@@ -20,16 +20,17 @@ export class StorageService {
 
   async createPresignedUploadUrl({ contentType, fileName, size }: CreatePresignedUploadUrlDto) {
 
-    const s3Name = uuid()
+
+    const s3FileKey = `${this.configService.get('file_key_base')}/${uuid()}`;
 
     const command = new PutObjectCommand({
       Bucket: this.configService.get<string>('bucket_name'),
-      Key: `${this.configService.get('file_key_base')}/${s3Name}`,
+      Key: s3FileKey,
       ContentType: contentType
     })
 
     try {
-      const createdFile = await this.fileModel.create({ originalName: fileName, s3Name, contentType, size, status: FileStatus.PENDING });
+      const createdFile = await this.fileModel.create({ originalName: fileName, s3FileKey, contentType, size, status: FileStatus.PENDING });
       const file = instanceToPlain(new FileResponseDto(createdFile.toObject()), { strategy: 'excludeAll' });
       const presignedUrl = await getSignedUrl(this.s3Client, command, { expiresIn: this.configService.get<number>('presigned_url_expires_in') })
       return {
@@ -50,7 +51,7 @@ export class StorageService {
 
     const command = new GetObjectCommand({
       Bucket: this.configService.get<string>('bucket_name'),
-      Key: `${this.configService.get('file_key_base')}/${file.s3Name}`,
+      Key: file.s3FileKey,
       ResponseContentDisposition: `inline; filename="${file.originalName}"`,
       /* ResponseContentDisposition: `attachment; filename="${file.originalName}"` */
       ResponseContentType: file.contentType
@@ -72,7 +73,9 @@ export class StorageService {
   }
 
   async getAllFiles() {
-    const files = await this.fileModel.find();
+    const files = await this.fileModel.find({
+      status: FileStatus.ACTIVE
+    });
     return files.map((file) => instanceToPlain(new FileResponseDto(file.toObject()), { strategy: 'excludeAll' }))
   }
 

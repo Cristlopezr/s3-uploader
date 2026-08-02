@@ -12,7 +12,8 @@
     "infra:synth": "pnpm --filter @s3-uploader/cdk run synth",
     "infra:deploy": "pnpm --filter @s3-uploader/cdk run deploy",
     "infra:diff": "pnpm --filter @s3-uploader/cdk run diff",
-    "infra:cdk": "pnpm --filter @s3-uploader/cdk cdk"
+    "infra:cdk": "pnpm --filter @s3-uploader/cdk cdk",
+    "infra:destroy": "pnpm --filter @s3-uploader/cdk run destroy"
   },
   "keywords": [],
   "author": "",
